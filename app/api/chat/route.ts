@@ -72,8 +72,25 @@ export async function POST(req: Request) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
-        // Send the complete message as data protocol chunks
-        controller.enqueue(encoder.encode(`0:${JSON.stringify(assistantText)}\n`));
+        // If there are tool calls, format as assistant-ui compatible tool invocations
+        if (data.toolCalls && Array.isArray(data.toolCalls)) {
+          // Parse the tool call arguments
+          const toolCall = data.toolCalls[0];
+          const args = JSON.parse(toolCall.function.arguments);
+          
+          // Create a message with tool invocation in assistant-ui format
+          const toolMessage = {
+            toolName: toolCall.function.name,
+            toolCallId: toolCall.id,
+            args: args
+          };
+          
+          // Send as JSON string (only stringify once)
+          controller.enqueue(encoder.encode(`0:${JSON.stringify(JSON.stringify(toolMessage))}\n`));
+        } else {
+          // Regular text response
+          controller.enqueue(encoder.encode(`0:${JSON.stringify(assistantText)}\n`));
+        }
         controller.close();
       },
     });
