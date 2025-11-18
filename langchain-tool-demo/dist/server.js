@@ -41,6 +41,28 @@ const generatePieChart = tool(async ({ labels, values }) => {
     }),
 });
 // ------------------------------------
+// GENERATE TABLE TOOL
+// ------------------------------------
+const generateTable = tool(async ({ columns, rows }) => {
+    return {
+        type: "table",
+        columns,
+        rows,
+        message: "Table data generated successfully.",
+    };
+}, {
+    name: "generate_table",
+    description: "Generate a data table with columns and rows. User will provide tabular data. Extract column headers and row data cleanly.",
+    schema: z.object({
+        columns: z
+            .array(z.string())
+            .describe("Column headers for the table. Example: ['Name', 'Age', 'City']"),
+        rows: z
+            .array(z.record(z.any()))
+            .describe("Array of row objects where keys are column names. Example: [{ 'Name': 'John', 'Age': 30, 'City': 'NYC' }]"),
+    }),
+});
+// ------------------------------------
 // AGENT
 // ------------------------------------
 const agent = createAgent({
@@ -49,19 +71,28 @@ const agent = createAgent({
         temperature: 0,
     }),
     systemPrompt: `
-You are a helpful assistant.
+You are a helpful assistant with the ability to generate visualizations.
 
 If the user asks to draw, plot, make, or generate a PIE CHART:
 → Parse labels + values from their input.
-→ Then call the "generate_pie_chart" tool with clean structured data.
+→ Call the "generate_pie_chart" tool with clean structured data.
+Example: "make pie chart of apples 10, oranges 20"
+→ Call: generate_pie_chart(labels:["apples","oranges"], values:[10,20])
 
-Example:
-User: "make pie chart of apples 10, oranges 20"
-Call: generate_pie_chart(labels:["apples","oranges"], values:[10,20])
+If the user asks to create, show, make, or generate a TABLE:
+→ Parse column headers and row data from their input.
+→ Call the "generate_table" tool with columns array and rows array of objects.
+Example: "make a table with Name, Age, City columns for John 30 NYC and Jane 25 LA"
+→ Call: generate_table(columns:["Name","Age","City"], rows:[{"Name":"John","Age":30,"City":"NYC"},{"Name":"Jane","Age":25,"City":"LA"}])
+
+IMPORTANT: When generating tables, ensure:
+- Columns are an array of strings
+- Rows are an array of objects where each key matches a column name
+- Data types are preserved (numbers as numbers, strings as strings)
 
 Otherwise, answer normally.
 `,
-    tools: [getWeather, generatePieChart],
+    tools: [getWeather, generatePieChart, generateTable],
 });
 // ------------------------------------
 // /message endpoint (legacy)
@@ -156,6 +187,59 @@ app.post("/api/chat", async (req, res) => {
             };
         });
         const response = await agent.invoke({ messages: langchainMessages });
+        console.log('\n📦 RESPONSE MESSAGES:', response.messages.length);
+        response.messages.forEach((msg, idx) => {
+            console.log(`  [${idx}] ${msg.constructor.name}:`, {
+                content: typeof msg.content === 'string' ? msg.content.substring(0, 100) : msg.content,
+                tool_calls: msg.tool_calls || 'none',
+            });
+        });
+        // Find tool call results (ToolMessage)
+        let toolResult = null;
+        for (const msg of response.messages) {
+            if (msg.constructor.name === "ToolMessage") {
+                console.log('\n🔧 TOOL MESSAGE FOUND:', msg);
+                try {
+                    // Tool result is in content, parse it
+                    const parsed = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+                    if (parsed && parsed.type) {
+                        // Extract the tool name from the message name or parsed type
+                        const toolName = msg.name || parsed.type;
+                        // Format based on tool type
+                        if (parsed.type === "table" || toolName === "generate_table") {
+                            toolResult = {
+                                toolName: "generate_table",
+                                args: {
+                                    columns: parsed.columns,
+                                    rows: parsed.rows,
+                                },
+                            };
+                        }
+                        else if (parsed.type === "pie_chart" || toolName === "generate_pie_chart") {
+                            toolResult = {
+                                toolName: "generate_pie_chart",
+                                args: {
+                                    labels: parsed.labels,
+                                    values: parsed.values,
+                                },
+                            };
+                        }
+                        else {
+                            // Generic fallback
+                            toolResult = {
+                                toolName: toolName,
+                                args: parsed,
+                            };
+                        }
+                        console.log('✅ Parsed tool result:', toolResult);
+                        break;
+                    }
+                }
+                catch (e) {
+                    console.log('⚠️ Failed to parse tool message:', e);
+                }
+            }
+        }
         // Find the assistant message
         let assistantMessage = null;
         for (let i = response.messages.length - 1; i >= 0; i--) {
@@ -168,22 +252,30 @@ app.post("/api/chat", async (req, res) => {
         if (!assistantMessage) {
             return res.status(500).json({ error: "No assistant message returned" });
         }
-        // Extract content as string
+        // If we have a tool result, format it as JSON for the frontend
         let content = "";
-        if (assistantMessage.content) {
-            if (Array.isArray(assistantMessage.content)) {
-                content = assistantMessage.content
-                    .map((c) => (typeof c === "string" ? c : c.text || JSON.stringify(c)))
-                    .join("\n");
-            }
-            else {
-                content = String(assistantMessage.content);
+        if (toolResult) {
+            console.log('\n📤 Sending tool result to frontend:', toolResult);
+            content = JSON.stringify(toolResult);
+        }
+        else {
+            // Extract regular text content
+            if (assistantMessage.content) {
+                if (Array.isArray(assistantMessage.content)) {
+                    content = assistantMessage.content
+                        .map((c) => (typeof c === "string" ? c : c.text || JSON.stringify(c)))
+                        .join("\n");
+                }
+                else {
+                    content = String(assistantMessage.content);
+                }
             }
         }
         // Ensure content is always a string
         if (typeof content !== "string") {
             content = String(content || "");
         }
+        console.log('\n📨 Final content to send:', content.substring(0, 200));
         // Generate message ID
         const messageId = assistantMessage.id?.[1] || Date.now().toString();
         // Set streaming headers (required by frontend)

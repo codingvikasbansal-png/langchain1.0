@@ -10,6 +10,7 @@ import {
 import { useEdgeRuntime } from "@assistant-ui/react";
 import { ImageSlider } from "./components/ImageSlider";
 import { DataTable } from "./components/DataTable";
+import { PieChartComponent } from "./components/PieChart";
 
 /**
  * Message component that renders individual chat messages
@@ -62,13 +63,53 @@ function ChatMessage() {
              // Check for 'text' property
              if ('text' in partObj) {
                console.log(`    → Found text property:`, partObj.text);
-               return typeof partObj.text === 'string' ? partObj.text : String(partObj.text);
+               
+               // Handle nested structure: text.parts[0].text
+               if (typeof partObj.text === 'string') {
+                 return partObj.text;
+               } else if (partObj.text && typeof partObj.text === 'object') {
+                 // Nested: text.parts[0].text
+                 if (partObj.text.parts && Array.isArray(partObj.text.parts)) {
+                   console.log(`    → Text is nested, extracting from parts`);
+                   return partObj.text.parts
+                     .map((nestedPart: any) => {
+                       if (typeof nestedPart === 'string') return nestedPart;
+                       if (nestedPart && nestedPart.text && typeof nestedPart.text === 'string') {
+                         return nestedPart.text;
+                       }
+                       return '';
+                     })
+                     .filter(Boolean)
+                     .join('');
+                 }
+               }
+               
+               return String(partObj.text);
              }
              
              // Check for type='text' with text property
              if (partObj.type === 'text' && partObj.text) {
                console.log(`    → Found type=text with text:`, partObj.text);
-               return typeof partObj.text === 'string' ? partObj.text : String(partObj.text);
+               
+               // Handle nested structure
+               if (typeof partObj.text === 'string') {
+                 return partObj.text;
+               } else if (partObj.text && typeof partObj.text === 'object') {
+                 if (partObj.text.parts && Array.isArray(partObj.text.parts)) {
+                   return partObj.text.parts
+                     .map((nestedPart: any) => {
+                       if (typeof nestedPart === 'string') return nestedPart;
+                       if (nestedPart && nestedPart.text && typeof nestedPart.text === 'string') {
+                         return nestedPart.text;
+                       }
+                       return '';
+                     })
+                     .filter(Boolean)
+                     .join('');
+                 }
+               }
+               
+               return String(partObj.text);
              }
              
              console.log(`    → No text found in object, stringifying`);
@@ -92,19 +133,27 @@ function ChatMessage() {
      }
      
      console.log('📝 Final Extracted Text:', textContent);
+     console.log('📝 Text length:', textContent.length);
+     console.log('📝 First 100 chars:', textContent.substring(0, 100));
      
      // Try to parse as JSON tool call
      if (textContent && typeof textContent === 'string' && textContent.trim().length > 0) {
        try {
          const parsed = JSON.parse(textContent);
+         console.log('🔍 Parsed JSON:', parsed);
          if (parsed && typeof parsed === 'object' && parsed.toolName && parsed.args) {
            toolCallData = parsed;
            isToolCall = true;
            console.log('✅ TOOL CALL DETECTED:', parsed.toolName);
+           console.log('✅ Tool args:', parsed.args);
+         } else {
+           console.log('⚠️ JSON parsed but missing toolName or args');
          }
        } catch (e) {
-         console.log('ℹ️ Not a tool call, regular text message');
+         console.log('ℹ️ Not a tool call, regular text message', e);
        }
+     } else {
+       console.log('⚠️ No text content to parse');
      }
      
      console.log('═══════════════════════════════════════════════════════\n');
@@ -136,7 +185,7 @@ function ChatMessage() {
             ) : null}
             
             {/* Render Data Table */}
-            {toolCallData.toolName === "createTable" && 
+            {(toolCallData.toolName === "createTable" || toolCallData.toolName === "generate_table") && 
              toolCallData.args?.columns && 
              toolCallData.args?.rows ? (
               <>
@@ -151,9 +200,27 @@ function ChatMessage() {
               </>
             ) : null}
             
+            {/* Render Pie Chart */}
+            {toolCallData.toolName === "generate_pie_chart" && 
+             toolCallData.args?.labels && 
+             toolCallData.args?.values ? (
+              <>
+                {console.log('Rendering PieChart with:', {
+                  labels: toolCallData.args.labels,
+                  values: toolCallData.args.values
+                })}
+                <PieChartComponent
+                  labels={toolCallData.args.labels}
+                  values={toolCallData.args.values}
+                />
+              </>
+            ) : null}
+            
             {/* Unknown or incomplete tool call */}
             {toolCallData.toolName !== "createSlider" && 
-             toolCallData.toolName !== "createTable" && (
+             toolCallData.toolName !== "createTable" && 
+             toolCallData.toolName !== "generate_table" && 
+             toolCallData.toolName !== "generate_pie_chart" && (
               <div className="px-4 py-3 bg-red-100 border border-red-300 rounded-lg">
                 <p className="text-sm text-red-800">Unknown tool: {toolCallData.toolName}</p>
                 <pre className="text-xs mt-2">{JSON.stringify(toolCallData, null, 2)}</pre>
@@ -163,21 +230,31 @@ function ChatMessage() {
             {/* Incomplete tool data */}
             {(toolCallData.toolName === "createSlider" && 
               (!toolCallData.args?.topic || !toolCallData.args?.count)) ||
-             (toolCallData.toolName === "createTable" && 
-              (!toolCallData.args?.columns || !toolCallData.args?.rows)) ? (
+             ((toolCallData.toolName === "createTable" || toolCallData.toolName === "generate_table") && 
+              (!toolCallData.args?.columns || !toolCallData.args?.rows)) ||
+             (toolCallData.toolName === "generate_pie_chart" && 
+              (!toolCallData.args?.labels || !toolCallData.args?.values)) ? (
               <div className="px-4 py-3 bg-yellow-50 border border-yellow-300 rounded-lg">
                 <p className="text-sm font-semibold text-yellow-800 mb-2">
-                  {toolCallData.toolName === "createTable" 
-                    ? "Table data incomplete" 
+                  {(toolCallData.toolName === "createTable" || toolCallData.toolName === "generate_table")
+                    ? "Table data incomplete"
+                    : toolCallData.toolName === "generate_pie_chart"
+                    ? "Pie chart data incomplete"
                     : "Tool call data incomplete"}
                 </p>
-                {toolCallData.toolName === "createTable" && (
+                {(toolCallData.toolName === "createTable" || toolCallData.toolName === "generate_table") && (
                   <div className="text-xs text-yellow-700 mb-2">
                     {!toolCallData.args?.columns && <p>• Missing: columns</p>}
                     {!toolCallData.args?.rows && <p>• Missing: rows</p>}
                     {toolCallData.args?.columns && !toolCallData.args?.rows && (
                       <p className="mt-2">Columns provided: {JSON.stringify(toolCallData.args.columns)}</p>
                     )}
+                  </div>
+                )}
+                {toolCallData.toolName === "generate_pie_chart" && (
+                  <div className="text-xs text-yellow-700 mb-2">
+                    {!toolCallData.args?.labels && <p>• Missing: labels</p>}
+                    {!toolCallData.args?.values && <p>• Missing: values</p>}
                   </div>
                 )}
                 <details className="mt-2">
@@ -237,7 +314,7 @@ function ChatMessage() {
             }
             
             // Show loader if message is still loading and no content
-            if (!displayText && messageState.message.status?.type === 'in_progress') {
+            if (!displayText && (messageState.message as any).status?.type === 'in_progress') {
               return (
                 <div className="flex items-center gap-2">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-700"></div>
