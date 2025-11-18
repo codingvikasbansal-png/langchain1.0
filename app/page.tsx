@@ -9,11 +9,12 @@ import {
 } from "@assistant-ui/react";
 import { useEdgeRuntime } from "@assistant-ui/react";
 import { ImageSlider } from "./components/ImageSlider";
+import { DataTable } from "./components/DataTable";
 
 /**
  * Message component that renders individual chat messages
  * Styles differently based on whether it's from user or assistant
- * Handles tool calls to render the ImageSlider component
+ * Handles tool calls to render ImageSlider and DataTable components
  */
 function ChatMessage() {
   const messageContext = useMessageContext();
@@ -27,51 +28,87 @@ function ChatMessage() {
   let toolCallData = null;
   let isToolCall = false;
   
-  console.log('ChatMessage - Full message:', messageState.message);
-  console.log('ChatMessage - Role:', messageState.message.role);
-  console.log('ChatMessage - Content type:', typeof content);
-  console.log('ChatMessage - Content:', content);
-  console.log('ChatMessage - Content is Array?:', Array.isArray(content));
-  
-  if (!isUser) {
-    // Try to extract text from content (could be string, array, or object)
-    let textContent = '';
-    
-    if (typeof content === "string") {
-      textContent = content;
-    } else if (Array.isArray(content)) {
-      // Content might be an array of parts
-      console.log('Content is array, items:', content);
-      textContent = content.map(part => {
-        if (typeof part === 'string') return part;
-        if (part && typeof part === 'object' && 'text' in part) return (part as any).text;
-        return '';
-      }).join('');
-    } else if (content && typeof content === 'object' && 'text' in content) {
-      textContent = (content as any).text;
-    }
-    
-    console.log('ChatMessage - Extracted text:', textContent);
-    
-    // Try to parse as JSON tool call
-    if (textContent) {
-      try {
-        const parsed = JSON.parse(textContent);
-        console.log('ChatMessage - Parsed:', parsed);
-        if (parsed.toolName && parsed.args) {
-          toolCallData = parsed;
-          isToolCall = true;
-          console.log('ChatMessage - Tool call detected!', toolCallData);
-        }
-      } catch (e) {
-        console.log('ChatMessage - Parse error:', e);
-        // Not a JSON tool call, regular text
-      }
-    }
-  }
-
-  console.log('ChatMessage - isToolCall:', isToolCall);
-  console.log('ChatMessage - Will render:', isToolCall ? 'ImageSlider' : 'Regular message');
+  // Extract text content for both display and tool call detection
+   if (!isUser) {
+     console.log('═══════════════════════════════════════════════════════');
+     console.log('💬 FRONTEND MESSAGE RECEIVED');
+     console.log('═══════════════════════════════════════════════════════');
+     console.log('Full Message:', JSON.stringify(messageState.message, null, 2));
+     console.log('Content Type:', typeof content);
+     console.log('Content Value:', content);
+     console.log('Is Array?:', Array.isArray(content));
+     
+     // Extract text from content structure
+     let textContent = '';
+     
+     if (typeof content === "string") {
+       textContent = content;
+       console.log('✓ Content is string:', textContent);
+     } else if (Array.isArray(content)) {
+       console.log('✓ Content is array with', content.length, 'items');
+       
+       // Extract text from each part in the array
+       textContent = content
+         .map((part, idx) => {
+           console.log(`  Part ${idx}:`, part);
+           
+           if (typeof part === 'string') {
+             return part;
+           }
+           
+           if (part && typeof part === 'object') {
+             const partObj = part as any;
+             
+             // Check for 'text' property
+             if ('text' in partObj) {
+               console.log(`    → Found text property:`, partObj.text);
+               return typeof partObj.text === 'string' ? partObj.text : String(partObj.text);
+             }
+             
+             // Check for type='text' with text property
+             if (partObj.type === 'text' && partObj.text) {
+               console.log(`    → Found type=text with text:`, partObj.text);
+               return typeof partObj.text === 'string' ? partObj.text : String(partObj.text);
+             }
+             
+             console.log(`    → No text found in object, stringifying`);
+             return '';
+           }
+           
+           return '';
+         })
+         .filter(Boolean)
+         .join('');
+         
+       console.log('✓ Extracted text from array:', textContent);
+     } else if (content && typeof content === 'object') {
+       const obj = content as any;
+       if ('text' in obj) {
+         textContent = typeof obj.text === 'string' ? obj.text : String(obj.text);
+       } else if (obj.type === 'text' && obj.text) {
+         textContent = typeof obj.text === 'string' ? obj.text : String(obj.text);
+       }
+       console.log('✓ Content is object, extracted text:', textContent);
+     }
+     
+     console.log('📝 Final Extracted Text:', textContent);
+     
+     // Try to parse as JSON tool call
+     if (textContent && typeof textContent === 'string' && textContent.trim().length > 0) {
+       try {
+         const parsed = JSON.parse(textContent);
+         if (parsed && typeof parsed === 'object' && parsed.toolName && parsed.args) {
+           toolCallData = parsed;
+           isToolCall = true;
+           console.log('✅ TOOL CALL DETECTED:', parsed.toolName);
+         }
+       } catch (e) {
+         console.log('ℹ️ Not a tool call, regular text message');
+       }
+     }
+     
+     console.log('═══════════════════════════════════════════════════════\n');
+   }
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -80,6 +117,7 @@ function ChatMessage() {
         {isToolCall && toolCallData && (
           <>
             {console.log('Rendering tool call:', toolCallData.toolName)}
+            {/* Render Image Slider */}
             {toolCallData.toolName === "createSlider" && 
              toolCallData.args?.topic && 
              toolCallData.args?.count ? (
@@ -95,12 +133,61 @@ function ChatMessage() {
                   imageUrls={toolCallData.args.imageUrls}
                 />
               </>
-            ) : (
+            ) : null}
+            
+            {/* Render Data Table */}
+            {toolCallData.toolName === "createTable" && 
+             toolCallData.args?.columns && 
+             toolCallData.args?.rows ? (
+              <>
+                {console.log('Rendering DataTable with:', {
+                  columns: toolCallData.args.columns,
+                  rows: toolCallData.args.rows
+                })}
+                <DataTable
+                  columns={toolCallData.args.columns}
+                  rows={toolCallData.args.rows}
+                />
+              </>
+            ) : null}
+            
+            {/* Unknown or incomplete tool call */}
+            {toolCallData.toolName !== "createSlider" && 
+             toolCallData.toolName !== "createTable" && (
               <div className="px-4 py-3 bg-red-100 border border-red-300 rounded-lg">
-                <p className="text-sm text-red-800">Tool call data incomplete</p>
+                <p className="text-sm text-red-800">Unknown tool: {toolCallData.toolName}</p>
                 <pre className="text-xs mt-2">{JSON.stringify(toolCallData, null, 2)}</pre>
               </div>
             )}
+            
+            {/* Incomplete tool data */}
+            {(toolCallData.toolName === "createSlider" && 
+              (!toolCallData.args?.topic || !toolCallData.args?.count)) ||
+             (toolCallData.toolName === "createTable" && 
+              (!toolCallData.args?.columns || !toolCallData.args?.rows)) ? (
+              <div className="px-4 py-3 bg-yellow-50 border border-yellow-300 rounded-lg">
+                <p className="text-sm font-semibold text-yellow-800 mb-2">
+                  {toolCallData.toolName === "createTable" 
+                    ? "Table data incomplete" 
+                    : "Tool call data incomplete"}
+                </p>
+                {toolCallData.toolName === "createTable" && (
+                  <div className="text-xs text-yellow-700 mb-2">
+                    {!toolCallData.args?.columns && <p>• Missing: columns</p>}
+                    {!toolCallData.args?.rows && <p>• Missing: rows</p>}
+                    {toolCallData.args?.columns && !toolCallData.args?.rows && (
+                      <p className="mt-2">Columns provided: {JSON.stringify(toolCallData.args.columns)}</p>
+                    )}
+                  </div>
+                )}
+                <details className="mt-2">
+                  <summary className="text-xs text-yellow-600 cursor-pointer">Show full data</summary>
+                  <pre className="text-xs mt-2 bg-yellow-100 p-2 rounded overflow-auto">
+                    {JSON.stringify(toolCallData, null, 2)}
+                  </pre>
+                </details>
+              </div>
+            ) : null}
           </>
         )}
 
@@ -108,13 +195,60 @@ function ChatMessage() {
         {!isToolCall && (
           <div
             className={`px-4 py-3 rounded-lg ${
-              isUser
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-900 border border-gray-200"
-            }`}
-          >
-            <MessagePrimitive.Content />
-          </div>
+            isUser
+              ? "bg-blue-600 text-white"
+              : "bg-gray-100 text-gray-900 border border-gray-200"
+          }`}
+        >
+          {(() => {
+            // Extract text from assistant-ui message structure
+            const fullMessage = messageState.message;
+            let displayText = '';
+            
+            // Assistant-ui structure: content[0].text.parts[0].text
+            if (fullMessage.content && Array.isArray(fullMessage.content)) {
+              for (const contentItem of fullMessage.content) {
+                const item = contentItem as any;
+                
+                // Check if this is a text content item
+                if (item.type === 'text') {
+                  // Text can be a string or an object with nested parts
+                  if (typeof item.text === 'string') {
+                    displayText = item.text;
+                    break;
+                  } else if (item.text && typeof item.text === 'object') {
+                    // Text is an object with parts array (nested structure)
+                    if (item.text.parts && Array.isArray(item.text.parts)) {
+                      displayText = item.text.parts
+                        .map((part: any) => {
+                          if (typeof part === 'string') return part;
+                          if (part && part.text && typeof part.text === 'string') {
+                            return part.text;
+                          }
+                          return '';
+                        })
+                        .filter(Boolean)
+                        .join('');
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Show loader if message is still loading and no content
+            if (!displayText && messageState.message.status?.type === 'in_progress') {
+              return (
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-700"></div>
+                  <span className="text-gray-600">Thinking...</span>
+                </div>
+              );
+            }
+            
+            return <span>{displayText || 'Thinking...'}</span>;
+          })()}
+           </div>
         )}
       </div>
     </div>
@@ -152,19 +286,19 @@ export default function Home() {
             <ThreadPrimitive.Viewport className="h-full overflow-y-scroll">
               <div className="px-6 py-8">
                 <div className="max-w-4xl mx-auto space-y-4">
-                  <ThreadPrimitive.Messages
-                    components={{ Message: ChatMessage }}
-                  />
+                <ThreadPrimitive.Messages
+                  components={{ Message: ChatMessage }}
+                />
 
-                  {/* Empty state when no messages */}
-                  <ThreadPrimitive.Empty>
-                    <div className="text-center text-gray-500 mt-20">
-                      <p className="text-lg">👋 Start a conversation</p>
-                      <p className="text-sm mt-2">
-                        Type a message below to begin
-                      </p>
-                    </div>
-                  </ThreadPrimitive.Empty>
+                {/* Empty state when no messages */}
+                <ThreadPrimitive.Empty>
+                  <div className="text-center text-gray-500 mt-20">
+                    <p className="text-lg">👋 Start a conversation</p>
+                    <p className="text-sm mt-2">
+                      Type a message below to begin
+                    </p>
+                  </div>
+                </ThreadPrimitive.Empty>
                 </div>
               </div>
             </ThreadPrimitive.Viewport>
