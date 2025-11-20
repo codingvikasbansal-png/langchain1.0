@@ -6,13 +6,109 @@ import { BranchSwitcher, CommandBar } from "./shared";
 import { MarkdownText } from "../markdown-text";
 import { LoadExternalComponent } from "@langchain/langgraph-sdk/react-ui";
 import { cn } from "@/lib/utils";
-import { ToolCalls, ToolResult } from "./tool-calls";
+import { ToolCalls, ToolResult, hasCustomRenderer } from "./tool-calls";
 import { MessageContentComplex } from "@langchain/core/messages";
 import { Fragment } from "react/jsx-runtime";
 import { isAgentInboxInterruptSchema } from "@/lib/agent-inbox-interrupt";
 import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
+
+/**
+ * Filter markdown tables from content if there's a custom table renderer
+ * for tool calls in the current message
+ */
+function filterMarkdownTablesIfCustomRenderer(
+  content: string,
+  thread: ReturnType<typeof useStreamContext>,
+  currentMessage: Message | undefined
+): string {
+  if (
+    !currentMessage ||
+    !["ai", "assistant"].includes(currentMessage.type)
+  ) {
+    return content;
+  }
+
+  // Does the message call generate_table?
+  const toolCalls =
+    ("tool_calls" in currentMessage && currentMessage.tool_calls) || [];
+
+  const hasTableToolCall = toolCalls.some(
+    (tc) => tc.name?.toLowerCase() === "generate_table"
+  );
+
+  if (!hasTableToolCall) return content;
+
+  // Does a later tool-msg contain a custom table renderer?
+  const messages = thread.messages || [];
+  const currentMessageIndex = messages.findIndex(
+    (m) => m.id === currentMessage.id
+  );
+
+  const hasCustomTableRenderer = messages
+    .slice(currentMessageIndex + 1)
+    .some((msg) => {
+      if (msg.type !== "tool") return false;
+      if (msg.name?.toLowerCase() !== "generate_table") return false;
+
+      try {
+        const parsed =
+          typeof msg.content === "string"
+            ? JSON.parse(msg.content)
+            : msg.content;
+
+        return (
+          hasCustomRenderer(msg.name) &&
+          parsed?.type?.toLowerCase() === "table"
+        );
+      } catch {
+        return hasCustomRenderer(msg.name);
+      }
+    });
+
+  if (!hasCustomTableRenderer) return content;
+
+  // -------------------------------------------
+  // REMOVE ALL MARKDOWN TABLES (LLM style)
+  // -------------------------------------------
+
+  const lines = content.split("\n");
+  const filtered: string[] = [];
+
+  // Matches ANY row that starts/ends with "|" — LLM tables usually look like this:
+  // | id | name | department |
+  const isTableLine = (line: string) =>
+    /^\s*\|.*\|\s*$/.test(line);
+
+  let inTable = false;
+
+  for (let line of lines) {
+    if (isTableLine(line)) {
+      // Enter table skipping mode
+      inTable = true;
+      continue;
+    }
+
+    if (inTable) {
+      // Keep skipping blank lines after table
+      if (line.trim() === "" || isTableLine(line)) {
+        continue;
+      }
+
+      // First non-table line → exit table mode
+      inTable = false;
+    }
+
+    filtered.push(line);
+  }
+
+  return filtered
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n") // clean up excessive blank lines
+    .trim();
+}
+
 
 function CustomComponent({
   message,
@@ -75,13 +171,20 @@ export function AssistantMessage({
   handleRegenerate: (parentCheckpoint: Checkpoint | null | undefined) => void;
 }) {
   const content = message?.content ?? [];
-  const contentString = getContentString(content);
+  let contentString = getContentString(content);
   const [hideToolCalls] = useQueryState(
     "hideToolCalls",
     parseAsBoolean.withDefault(false),
   );
 
   const thread = useStreamContext();
+  
+  // Filter markdown tables if there's a custom table renderer
+  contentString = filterMarkdownTablesIfCustomRenderer(
+    contentString,
+    thread,
+    message
+  );
   const isLastMessage =
     thread.messages[thread.messages.length - 1].id === message?.id;
   const hasNoAIOrToolMessages = !thread.messages.find(

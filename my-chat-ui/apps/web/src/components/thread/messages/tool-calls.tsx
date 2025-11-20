@@ -8,6 +8,19 @@ function isComplexValue(value: any): boolean {
   return Array.isArray(value) || (typeof value === "object" && value !== null);
 }
 
+/**
+ * Check if a tool name has a custom renderer
+ */
+export function hasCustomRenderer(toolName: string | null | undefined): boolean {
+  if (!toolName) return false;
+  const name = toolName.toLowerCase();
+  return (
+    name === "generate_pie_chart" ||
+    name === "generate_table" ||
+    name === "get_weather"
+  );
+}
+
 export function ToolCalls({
   toolCalls,
 }: {
@@ -15,9 +28,17 @@ export function ToolCalls({
 }) {
   if (!toolCalls || toolCalls.length === 0) return null;
 
+  // Filter out tool calls that have custom renderers
+  const toolCallsToShow = toolCalls.filter(
+    (tc) => !hasCustomRenderer(tc.name)
+  );
+
+  // If all tool calls have custom renderers, don't show anything
+  if (toolCallsToShow.length === 0) return null;
+
   return (
     <div className="space-y-4 w-full max-w-4xl">
-      {toolCalls.map((tc, idx) => {
+      {toolCallsToShow.map((tc, idx) => {
         const args = tc.args as Record<string, any>;
         const hasArgs = Object.keys(args).length > 0;
         return (
