@@ -10,19 +10,21 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.29",
-    "@langchain/langgraph": "^0.2.0",
-    "@langchain/openai": "^0.3.0",
-    "express": "^4.21.0",
+    "@langchain/core": "^1.0.6",
+    "@langchain/langgraph": "^1.0.2",
+    "@langchain/openai": "^1.1.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
-    "uuid": "^11.0.0"
+    "express": "^4.21.0",
+    "langchain": "^1.0.6",
+    "uuid": "^11.0.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
     "@types/cors": "^2.8.17",
-    "@types/uuid": "^10.0.0",
+    "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
+    "@types/uuid": "^10.0.0",
     "typescript": "^5.7.2"
   },
   "keywords": [

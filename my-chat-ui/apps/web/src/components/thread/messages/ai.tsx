@@ -113,7 +113,7 @@ export function AssistantMessage({
   }
 
   return (
-    <div className="flex items-start mr-auto gap-2 group">
+    <div className="flex flex-col w-full items-start mr-auto gap-2 group">
       {isToolResult ? (
         <ToolResult message={message} />
       ) : (
@@ -136,7 +136,7 @@ export function AssistantMessage({
             </>
           )}
 
-          {message && <CustomComponent message={message} thread={thread} />}
+          {message && !isToolResult && <CustomComponent message={message} thread={thread} />}
           {isAgentInboxInterruptSchema(threadInterrupt?.value) &&
             (isLastMessage || hasNoAIOrToolMessages) && (
               <ThreadView interrupt={threadInterrupt.value} />

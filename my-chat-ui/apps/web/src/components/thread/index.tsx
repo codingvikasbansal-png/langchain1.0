@@ -337,22 +337,28 @@ export function Thread() {
               <>
                 {messages
                   .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                  .map((message, index) =>
-                    message.type === "human" ? (
+                  .map((message, index) => {
+                    // Generate stable key: prefer message.id (most stable), then use type + tool_call_id for tool messages
+                    const stableKey = message.id || 
+                      (message.type === "tool" && "tool_call_id" in message && message.tool_call_id
+                        ? `${message.type}-${message.tool_call_id}`
+                        : `${message.type}-${index}`);
+                    
+                    return message.type === "human" ? (
                       <HumanMessage
-                        key={message.id || `${message.type}-${index}`}
+                        key={stableKey}
                         message={message}
                         isLoading={isLoading}
                       />
                     ) : (
                       <AssistantMessage
-                        key={message.id || `${message.type}-${index}`}
+                        key={stableKey}
                         message={message}
                         isLoading={isLoading}
                         handleRegenerate={handleRegenerate}
                       />
-                    ),
-                  )}
+                    );
+                  })}
                 {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
                     We need to render it outside of the messages list, since there are no messages to render */}
                 {hasNoAIOrToolMessages && !!stream.interrupt && (

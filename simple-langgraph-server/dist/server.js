@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -9,6 +42,8 @@ const cors_1 = __importDefault(require("cors"));
 const uuid_1 = require("uuid");
 const openai_1 = require("@langchain/openai");
 const messages_1 = require("@langchain/core/messages");
+const langchain_1 = require("langchain");
+const z = __importStar(require("zod"));
 const app = (0, express_1.default)();
 // CORS configuration for Agent Chat UI
 app.use((0, cors_1.default)({
@@ -27,16 +62,98 @@ if (!OPENAI_API_KEY) {
     console.error("❌ OPENAI_API_KEY is required. Please set it in your .env file.");
     process.exit(1);
 }
-// Initialize OpenAI model
+// Initialize OpenAI model using LangChain 1.0 syntax
 const model = new openai_1.ChatOpenAI({
-    modelName: "gpt-3.5-turbo",
+    model: "gpt-3.5-turbo",
     temperature: 0.7,
-    openAIApiKey: OPENAI_API_KEY,
+    apiKey: OPENAI_API_KEY,
 });
-// Simple chat function
+// ------------------------------------
+// TOOLS - LangChain 1.0 Style
+// ------------------------------------
+const getWeather = (0, langchain_1.tool)(({ city }) => `It's always sunny in ${city}!`, {
+    name: "get_weather",
+    description: "Get the weather for a given city",
+    schema: z.object({
+        city: z.string().describe("City name to get weather for"),
+    }),
+});
+const generatePieChart = (0, langchain_1.tool)(({ labels, values }) => {
+    return {
+        type: "pie_chart",
+        labels,
+        values,
+        message: "Pie chart data generated successfully.",
+    };
+}, {
+    name: "generate_pie_chart",
+    description: "Generate pie chart data. User will give categories + values. Extract them cleanly.",
+    schema: z.object({
+        labels: z
+            .array(z.string())
+            .describe("Labels for pie chart slices. Example: ['Apples', 'Bananas']"),
+        values: z
+            .array(z.number())
+            .describe("Numeric values for each label. Must match the labels count. Example: [10, 20]"),
+    }),
+});
+const generateTable = (0, langchain_1.tool)(({ columns, rows }) => {
+    return {
+        type: "table",
+        columns,
+        rows,
+        message: "Table data generated successfully.",
+    };
+}, {
+    name: "generate_table",
+    description: "Generate a data table with columns and rows. User will provide tabular data. Extract column headers and row data cleanly.",
+    schema: z.object({
+        columns: z
+            .array(z.string())
+            .describe("Column headers for the table. Example: ['Name', 'Age', 'City']"),
+        rows: z
+            .array(z.record(z.string(), z.any()))
+            .describe("Array of row objects where keys are column names. Example: [{ 'Name': 'John', 'Age': 30, 'City': 'NYC' }]"),
+    }),
+});
+// ------------------------------------
+// AGENT - LangChain 1.0 createAgent
+// ------------------------------------
+const agent = (0, langchain_1.createAgent)({
+    model,
+    tools: [getWeather, generatePieChart, generateTable],
+    systemPrompt: `
+You are a helpful assistant with the ability to generate visualizations and get weather information.
+
+If the user asks to draw, plot, make, or generate a PIE CHART:
+→ Parse labels + values from their input.
+→ Call the "generate_pie_chart" tool with clean structured data.
+Example: "make pie chart of apples 10, oranges 20"
+→ Call: generate_pie_chart(labels:["apples","oranges"], values:[10,20])
+
+If the user asks to create, show, make, or generate a TABLE:
+→ Parse column headers and row data from their input.
+→ Call the "generate_table" tool with columns array and rows array of objects.
+Example: "make a table with Name, Age, City columns for John 30 NYC and Jane 25 LA"
+→ Call: generate_table(columns:["Name","Age","City"], rows:[{"Name":"John","Age":30,"City":"NYC"},{"Name":"Jane","Age":25,"City":"LA"}])
+
+If the user asks about weather:
+→ Call the "get_weather" tool with the city name.
+
+IMPORTANT: When generating tables, ensure:
+- Columns are an array of strings
+- Rows are an array of objects where each key matches a column name
+- Data types are preserved (numbers as numbers, strings as strings)
+
+Otherwise, answer normally.
+`,
+});
+// Simple chat function using the new agent
 async function processChat(messages) {
-    const response = await model.invoke(messages);
-    return response;
+    const response = await agent.invoke({ messages });
+    // Extract the last AI message from the response
+    const aiMessages = response.messages.filter(msg => msg instanceof messages_1.AIMessage);
+    return aiMessages[aiMessages.length - 1];
 }
 // In-memory storage for threads
 const threads = new Map();
@@ -363,7 +480,7 @@ app.post("/threads/:threadId/history", (req, res) => {
     const messages = thread.messages.slice(-limit).map((msg, index) => {
         if (msg instanceof messages_1.HumanMessage) {
             return {
-                id: `msg-${index}`,
+                id: msg.id || `msg-${index}`,
                 type: "human",
                 content: [
                     {
@@ -375,7 +492,7 @@ app.post("/threads/:threadId/history", (req, res) => {
         }
         else if (msg instanceof messages_1.AIMessage) {
             return {
-                id: `msg-${index}`,
+                id: msg.id || `msg-${index}`,
                 type: "ai",
                 content: [
                     {
@@ -383,6 +500,34 @@ app.post("/threads/:threadId/history", (req, res) => {
                         text: msg.content,
                     },
                 ],
+                ...(msg.tool_calls && msg.tool_calls.length > 0 ? {
+                    tool_calls: msg.tool_calls.map(tc => ({
+                        id: tc.id,
+                        name: tc.name,
+                        args: tc.args,
+                        type: "tool_call"
+                    }))
+                } : {})
+            };
+        }
+        else if (msg instanceof messages_1.ToolMessage) {
+            // Preserve tool result messages
+            let toolContent;
+            if (typeof msg.content === "string") {
+                toolContent = msg.content;
+            }
+            else if (typeof msg.content === "object" && msg.content !== null) {
+                toolContent = JSON.stringify(msg.content);
+            }
+            else {
+                toolContent = String(msg.content);
+            }
+            return {
+                id: msg.id || `msg-${index}`,
+                type: "tool",
+                content: toolContent,
+                name: msg.name || "tool",
+                tool_call_id: msg.tool_call_id
             };
         }
         return null;
@@ -419,7 +564,7 @@ app.get("/threads/:threadId/history", (req, res) => {
     const messages = thread.messages.slice(-limit).map((msg, index) => {
         if (msg instanceof messages_1.HumanMessage) {
             return {
-                id: `msg-${index}`,
+                id: msg.id || `msg-${index}`,
                 type: "human",
                 content: [
                     {
@@ -435,7 +580,7 @@ app.get("/threads/:threadId/history", (req, res) => {
         }
         else if (msg instanceof messages_1.AIMessage) {
             return {
-                id: `msg-${index}`,
+                id: msg.id || `msg-${index}`,
                 type: "ai",
                 content: [
                     {
@@ -443,6 +588,38 @@ app.get("/threads/:threadId/history", (req, res) => {
                         text: msg.content
                     }
                 ],
+                ...(msg.tool_calls && msg.tool_calls.length > 0 ? {
+                    tool_calls: msg.tool_calls.map(tc => ({
+                        id: tc.id,
+                        name: tc.name,
+                        args: tc.args,
+                        type: "tool_call"
+                    }))
+                } : {}),
+                checkpoint: {
+                    checkpoint_id: `checkpoint-${index}`,
+                    parent_checkpoint: index > 0 ? { checkpoint_id: `checkpoint-${index - 1}` } : null
+                }
+            };
+        }
+        else if (msg instanceof messages_1.ToolMessage) {
+            // Preserve tool result messages
+            let toolContent;
+            if (typeof msg.content === "string") {
+                toolContent = msg.content;
+            }
+            else if (typeof msg.content === "object" && msg.content !== null) {
+                toolContent = JSON.stringify(msg.content);
+            }
+            else {
+                toolContent = String(msg.content);
+            }
+            return {
+                id: msg.id || `msg-${index}`,
+                type: "tool",
+                content: toolContent,
+                name: msg.name || "tool",
+                tool_call_id: msg.tool_call_id,
                 checkpoint: {
                     checkpoint_id: `checkpoint-${index}`,
                     parent_checkpoint: index > 0 ? { checkpoint_id: `checkpoint-${index - 1}` } : null
@@ -524,32 +701,102 @@ app.post("/threads/:threadId/runs/stream", async (req, res) => {
             res.end();
             return;
         }
-        const lastUserMessage = userMessages[userMessages.length - 1];
-        // Stream the model response
-        const stream = await model.stream([lastUserMessage]);
-        let fullContent = "";
-        for await (const chunk of stream) {
-            if (chunk.content) {
-                fullContent += chunk.content;
-                // Send message chunk
-                res.write(`event: values\n`);
-                res.write(`data: ${JSON.stringify({
-                    messages: [{
-                            content: [
-                                {
-                                    type: "text",
-                                    text: fullContent
-                                }
-                            ],
-                            id: (0, uuid_1.v4)(),
-                            type: "ai"
-                        }]
-                })}\n\n`);
+        // Use the agent to process the conversation (this will handle tool calls)
+        console.log(`🤖 Invoking agent with ${thread.messages.length} messages`);
+        const agentResponse = await agent.invoke({ messages: thread.messages });
+        console.log(`📦 Agent returned ${agentResponse.messages.length} messages`);
+        // Process all messages from agent response (includes tool calls and results)
+        const allNewMessages = [];
+        let lastAIMessage = null;
+        // Find new messages that aren't already in the thread
+        const existingMessageIds = new Set(thread.messages.map(m => m.id || ''));
+        for (const msg of agentResponse.messages) {
+            if (!existingMessageIds.has(msg.id || '')) {
+                allNewMessages.push(msg);
+                if (msg instanceof messages_1.AIMessage) {
+                    lastAIMessage = msg;
+                }
+                const msgType = msg.constructor.name;
+                const toolCallsInfo = msg instanceof messages_1.AIMessage && msg.tool_calls
+                    ? ` with ${msg.tool_calls.length} tool calls`
+                    : '';
+                console.log(`📝 New message: ${msgType}${toolCallsInfo}`);
             }
         }
-        // Add the complete message to thread
-        const aiMessage = new messages_1.AIMessage(fullContent);
-        thread.messages.push(aiMessage);
+        // Add all new messages to thread (including tool calls and tool results)
+        allNewMessages.forEach(msg => {
+            thread.messages.push(msg);
+        });
+        // Build a map of tool_call_id to tool name for matching
+        const toolCallIdToName = new Map();
+        for (const msg of allNewMessages) {
+            if (msg instanceof messages_1.AIMessage && msg.tool_calls) {
+                for (const tc of msg.tool_calls) {
+                    if (tc.id) {
+                        toolCallIdToName.set(tc.id, tc.name);
+                    }
+                }
+            }
+        }
+        // Stream all new messages in order (AI messages with tool calls, tool results, final AI response)
+        // Build complete message list for streaming
+        const allMessagesToSend = allNewMessages.map((msg, idx) => {
+            if (msg instanceof messages_1.AIMessage) {
+                const content = typeof msg.content === "string"
+                    ? [{ type: "text", text: msg.content }]
+                    : Array.isArray(msg.content)
+                        ? msg.content
+                        : [{ type: "text", text: String(msg.content) }];
+                return {
+                    id: msg.id || `msg-${idx}`,
+                    type: "ai",
+                    content,
+                    ...(msg.tool_calls && msg.tool_calls.length > 0 ? {
+                        tool_calls: msg.tool_calls.map(tc => ({
+                            id: tc.id,
+                            name: tc.name,
+                            args: tc.args,
+                            type: "tool_call"
+                        }))
+                    } : {})
+                };
+            }
+            else if (msg instanceof messages_1.ToolMessage) {
+                // Get tool name from the tool call that triggered this result
+                const toolCallId = msg.tool_call_id;
+                const toolName = toolCallIdToName.get(toolCallId) || msg.name || "unknown";
+                // Ensure content is properly formatted
+                let toolContent;
+                if (typeof msg.content === "string") {
+                    toolContent = msg.content;
+                }
+                else if (typeof msg.content === "object" && msg.content !== null) {
+                    toolContent = JSON.stringify(msg.content);
+                }
+                else {
+                    toolContent = String(msg.content);
+                }
+                console.log(`🔧 Tool result for "${toolName}":`, toolContent.substring(0, 200));
+                // Ensure tool messages have a stable id. Prefer existing id, then toolCallId, else generate a UUID.
+                const assignedToolId = msg.id || toolCallId || (0, uuid_1.v4)();
+                return {
+                    id: assignedToolId,
+                    type: "tool",
+                    content: toolContent,
+                    name: toolName, // Use the tool name from the tool call
+                    tool_call_id: toolCallId
+                };
+            }
+            return null;
+        }).filter(Boolean);
+        // Send all messages in one values event
+        if (allMessagesToSend.length > 0) {
+            console.log(`📤 Sending ${allMessagesToSend.length} messages (including tool calls/results)`);
+            res.write(`event: values\n`);
+            res.write(`data: ${JSON.stringify({
+                messages: allMessagesToSend
+            })}\n\n`);
+        }
         thread.updated_at = new Date().toISOString();
         // Send run end event
         res.write(`event: run_end\n`);

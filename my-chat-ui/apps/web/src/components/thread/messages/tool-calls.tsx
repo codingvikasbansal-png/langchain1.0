@@ -2,6 +2,7 @@ import { AIMessage, ToolMessage } from "@langchain/langgraph-sdk";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { CustomToolRenderer } from "./custom-tool-renderers";
 
 function isComplexValue(value: any): boolean {
   return Array.isArray(value) || (typeof value === "object" && value !== null);
@@ -68,6 +69,7 @@ export function ToolCalls({
 export function ToolResult({ message }: { message: ToolMessage }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // Check if we should use custom renderer by checking the message content
   let parsedContent: any;
   let isJsonContent = false;
 
@@ -75,12 +77,54 @@ export function ToolResult({ message }: { message: ToolMessage }) {
     if (typeof message.content === "string") {
       parsedContent = JSON.parse(message.content);
       isJsonContent = true;
+    } else if (typeof message.content === "object" && message.content !== null) {
+      parsedContent = message.content;
+      isJsonContent = true;
+    } else {
+      parsedContent = message.content;
     }
   } catch {
     // Content is not JSON, use as is
     parsedContent = message.content;
   }
 
+  // Check if we have a custom renderer for this tool
+  // Parse content to check tool type
+  let toolType: string | null = null;
+  if (isJsonContent && parsedContent && typeof parsedContent === "object" && parsedContent.type) {
+    toolType = parsedContent.type.toLowerCase();
+  }
+  const toolName = message.name?.toLowerCase() || "";
+  
+  // Check if custom renderer should be used
+  const hasCustomRenderer = 
+    toolName === "generate_pie_chart" || toolType === "pie_chart" ||
+    toolName === "generate_table" || toolType === "table" ||
+    toolName === "get_weather" || toolType === "weather";
+
+  console.log("🔧 [ToolResult] Tool detection:", {
+    toolName,
+    toolType,
+    hasCustomRenderer,
+    parsedContent,
+    messageName: message.name,
+    messageType: typeof message.content,
+    contentIsString: typeof message.content === "string",
+  });
+
+  // If we have a custom renderer, render it directly (same pattern as ToolCalls)
+  if (hasCustomRenderer) {
+    console.log("✅ [ToolResult] Using CustomToolRenderer for:", toolName || toolType);
+    return (
+      <div className="w-full">
+        <CustomToolRenderer message={message} />
+      </div>
+    );
+  } else {
+    console.warn("❌ [ToolResult] No custom renderer found. Tool name:", toolName, "Tool type:", toolType);
+  }
+
+  // Otherwise, prepare default rendering
   const contentStr = isJsonContent
     ? JSON.stringify(parsedContent, null, 2)
     : String(message.content);
@@ -93,6 +137,7 @@ export function ToolResult({ message }: { message: ToolMessage }) {
         : contentLines.slice(0, 4).join("\n") + "\n..."
       : contentStr;
 
+  // Otherwise, use default rendering
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
       <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">

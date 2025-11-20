@@ -58,6 +58,14 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
 };
 
 const defaultComponents: any = {
+  img: ({ src, alt, ...props }: { src?: string; alt?: string; className?: string }) => {
+    // Filter out placeholder image URLs
+    if (src && (src.includes("PIE_CHART_IMAGE_URL") || src.includes("IMAGE_URL") || src.includes("PLACEHOLDER"))) {
+      console.debug("[MarkdownText] Filtering placeholder image:", src);
+      return null;
+    }
+    return <img src={src} alt={alt} {...props} />;
+  },
   h1: ({ className, ...props }: { className?: string }) => (
     <h1
       className={cn(
